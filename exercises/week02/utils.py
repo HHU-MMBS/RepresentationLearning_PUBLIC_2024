@@ -17,7 +17,7 @@ def imshow(img, i=0, mean=torch.tensor([0.0], dtype=torch.float32), std=torch.te
 
 
 @torch.no_grad()
-def prevalidate(model, val_loader,criterion, device):
+def prevalidate(model, val_loader, criterion, device):
     model.eval()
     loss_step = []
     for inp_data, labels in val_loader:
