@@ -30,19 +30,25 @@ def prevalidate(model, val_loader, criterion, device):
     return val_loss_epoch
 
 
-def pretrain_one_epoch(model, optimizer, train_loader, criterion, device):
+def pretrain_one_epoch(model, optimizer, train_loader, criterion,
+                       device, dtype, scaler):
     model.train()
     loss_step = []
     for data in tqdm(train_loader, leave=False, desc='Training'):
+        optimizer.zero_grad(set_to_none=True)
         # Move the data to the GPU
         inp_data, labels = data
         inp_data, labels = inp_data.to(device), labels.to(device)
-        with torch.autocast(device_type=device.type, dtype=torch.float16):
+        with torch.autocast(device_type=device.type, dtype=dtype):
             outputs = model(inp_data)
             loss = criterion(outputs, labels)
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            optimizer.step()
         loss_step.append(loss.item())
     # dont forget the means here
     loss_curr_epoch = np.mean(loss_step)
@@ -60,11 +66,16 @@ def save_model(model, path, epoch, optimizer, val_loss):
 def pretrain(model, optimizer, num_epochs, train_loader, val_loader, criterion, device):
     dict_log = {"train_loss": [], "val_loss": []}
     device = torch.device(device)
+
+    dtype = torch.bfloat16 if (device.type == 'cpu' or torch.cuda.is_bf16_supported()) else torch.float16
+    scaler = torch.cuda.amp.GradScaler() if (device.type == 'cuda' and dtype == torch.float16) else None
+
     best_val_loss = 1e8
     model = model.to(device)
     pbar = tqdm(range(num_epochs))
     for epoch in pbar:
-        loss_curr_epoch = pretrain_one_epoch(model, optimizer, train_loader, criterion, device)
+        loss_curr_epoch = pretrain_one_epoch(model, optimizer, train_loader, criterion,
+                                             device=device, dtype=dtype, scaler=scaler)
         val_loss = prevalidate(model, val_loader, criterion, device)
 
         # Print epoch results to screen
